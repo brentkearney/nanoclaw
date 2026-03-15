@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git checkout:*)",
+      "Bash(git cherry-pick:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(npm test:*)",
+      "Bash(gh pr:*)",
+      "Bash(git rebase:*)",
+      "Bash(find /Users/brent/Projects/nanoclaw -path *setup/index.ts -o -path *setup.ts)",
+      "Bash(git ls-remote:*)",
+      "Bash(ls:*)",
+      "Bash(git remote:*)",
+      "Bash(git fetch:*)",
+      "Bash(git push:*)",
+      "Bash(git branch:*)",
+      "Bash(git mv:*)",
+      "Bash(git commit:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}
