@@ -2,7 +2,7 @@
  * Container Runner for NanoClaw
  * Spawns agent execution in containers and handles IPC
  */
-import { ChildProcess, exec, execFileSync, spawn } from 'child_process';
+import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -249,19 +249,6 @@ function buildContainerArgs(
   if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
     args.push('--user', `${hostUid}:${hostGid}`);
     args.push('-e', 'HOME=/home/node');
-    // Forward supplementary groups so bind-mounted files with group access work.
-    try {
-      const groups = execFileSync('id', ['-G'], { encoding: 'utf8' })
-        .trim()
-        .split(/\s+/);
-      for (const g of groups) {
-        if (g !== String(hostUid) && g !== String(hostGid)) {
-          args.push('--group-add', g);
-        }
-      }
-    } catch {
-      /* ignore — groups just won't be forwarded */
-    }
   }
 
   for (const mount of mounts) {
