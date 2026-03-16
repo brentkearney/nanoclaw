@@ -7,7 +7,9 @@ description: Add MemOS persistent memory backend to NanoClaw. Provides semantic 
 
 This skill integrates [MemOS](https://memos.openmem.net) as a persistent memory backend for NanoClaw agents. When configured, agents get semantic search across past conversations, automatic memory capture, and explicit memory tools (`search_memories`, `add_memory`, `chat`).
 
-## Phase 1: Pre-flight
+## Phase 1: Pre-flight & Gather Info
+
+Gather all required information up front so the remaining phases can run unattended.
 
 ### Check if already applied
 
@@ -20,6 +22,48 @@ docker info > /dev/null 2>&1 && echo "Docker OK" || echo "Docker not available"
 ```
 
 Docker is required for both the NanoClaw agent containers and the MemOS stack.
+
+### Read assistant name
+
+Read `ASSISTANT_NAME` from `.env` (defaults to "Andy" if not set). Use this name (lowercased) for defaults below.
+
+### Gather user inputs
+
+Use `AskUserQuestion` to collect all required configuration at once:
+
+> I need a few details to set up MemOS. Please provide:
+>
+> **1. Embeddings API provider** — MemOS needs an OpenAI-compatible API for generating embeddings (vector representations for semantic search).
+>   - **OpenRouter** (recommended) — supports many embedding models without a direct OpenAI account. Base URL: `https://openrouter.ai/api/v1`
+>   - **OpenAI directly** — Base URL: `https://api.openai.com/v1`
+>   - **Other** — any OpenAI-compatible endpoint (e.g., local Ollama, LiteLLM, vLLM)
+>
+> **2. API key** for the embeddings provider
+>
+> **3. Embedding model name** (e.g., `openai/text-embedding-3-small`)
+>
+> **4. MemOS basic auth password** — used to secure the MemOS API via the reverse proxy. The username will default to `<assistant_name>`.
+>
+> **5. Where to clone MemOS** — the MemOS Docker stack will be cloned here (default: `../MemOS` relative to this project)
+>
+> **6. Migrate existing memories?** — Should I migrate your existing conversation history and group notes into MemOS? (yes/no)
+
+Store all answers for use in subsequent phases.
+
+### Validate embeddings API
+
+Immediately test the user's embeddings API credentials before proceeding:
+
+```bash
+curl -s <OPENAI_BASE_URL>/embeddings \
+  -H "Authorization: Bearer <OPENAI_API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{"input":"test","model":"<embedding_model>"}'
+```
+
+A successful response will contain an `embedding` array of floats. If you get a 401 (bad key), 404 (wrong endpoint), or 400 (unsupported model), inform the user what went wrong and loop back to "Gather user inputs" to collect corrected values. Do not proceed until this test passes — MemOS will silently fail to index memories otherwise.
+
+No more user interaction is needed after this point.
 
 ## Phase 2: Apply Code Changes
 
@@ -73,24 +117,39 @@ Build must be clean before proceeding.
 
 ## Phase 3: MemOS Stack Setup
 
-### Deploy MemOS
+### Clone MemOS
 
 MemOS runs as a Docker stack with 5 services: `memos-api`, `memos-mcp`, `neo4j`, `qdrant`, and `caddy` (reverse proxy).
 
-Tell the user:
+Clone to the location specified in Phase 1:
 
-> I need you to set up the MemOS Docker stack. Follow the instructions at:
->
-> - [MemOS GitHub](https://github.com/MemTensor/MemOS) — clone and use the Docker Compose setup
-> - [MemOS Documentation](https://memos-docs.openmem.net)
->
-> The stack requires:
-> 1. An OpenAI-compatible API key for embeddings (e.g., [OpenRouter](https://openrouter.ai))
-> 2. Docker and Docker Compose
->
-> Once running, give me the API URL (e.g., `http://localhost:8080/product`)
+```bash
+git clone https://github.com/MemTensor/MemOS.git <clone_path>
+cd <clone_path>
+```
 
-### Verify stack is running
+Refer to the [MemOS documentation](https://memos-docs.openmem.net) and the Docker Compose files in the repo for the available deployment options. The `docker/` directory contains compose configurations.
+
+### Configure the MemOS stack
+
+Create the MemOS `.env` file using values gathered in Phase 1:
+- `OPENAI_API_KEY` — the user's embeddings API key
+- `OPENAI_BASE_URL` — the user's embeddings API endpoint
+- Caddy basic auth: username `<assistant_name>`, password from Phase 1
+
+### Start the stack
+
+```bash
+docker compose up -d
+```
+
+Verify all 5 services are running:
+
+```bash
+docker ps | grep memos
+```
+
+### Verify stack is healthy
 
 ```bash
 curl -s http://localhost:8080/product/search -X POST -H "Content-Type: application/json" -d '{"query":"test","user_id":"test"}' | head -c 200
@@ -99,26 +158,45 @@ curl -s http://localhost:8080/product/search -X POST -H "Content-Type: applicati
 If using basic auth:
 
 ```bash
-curl -s -u user:password http://localhost:8080/product/search -X POST -H "Content-Type: application/json" -d '{"query":"test","user_id":"test"}' | head -c 200
+curl -s -u <assistant_name>:<password> http://localhost:8080/product/search -X POST -H "Content-Type: application/json" -d '{"query":"test","user_id":"test"}' | head -c 200
 ```
 
 A JSON response (even with empty results) means the stack is healthy.
 
-## Phase 4: Configuration
+### Verify end-to-end memory storage and retrieval
+
+Test the full pipeline — store a memory, search semantically, verify non-zero relevance:
+
+```bash
+# Store a test memory
+curl -s -u <assistant_name>:<password> http://localhost:8080/product/add -X POST -H "Content-Type: application/json" -d '{"text":"The sky is blue and water is wet","user_id":"test"}'
+
+# Wait a few seconds for async ingestion, then search
+sleep 5
+curl -s -u <assistant_name>:<password> http://localhost:8080/product/search -X POST -H "Content-Type: application/json" -d '{"query":"what color is the sky","user_id":"test"}'
+```
+
+The search should return the memory with a non-zero relevance score. If results are empty or all scores are 0.00:
+
+- Check the MemOS API logs: `docker logs memos-api --tail 50`
+- Look for 400/401 errors from the embeddings provider
+- Verify `OPENAI_API_KEY` and `OPENAI_BASE_URL` are set correctly in the MemOS stack `.env`
+
+## Phase 4: NanoClaw Configuration
 
 ### Set environment variables
 
-Add to `.env`:
+Add to NanoClaw's `.env` using the values from Phase 1:
 
 ```bash
 # MemOS API endpoint (host-side, through reverse proxy)
 MEMOS_API_URL=http://localhost:8080/product
 
 # Basic auth credentials for the reverse proxy (user:password)
-MEMOS_API_AUTH=bee:yourpassword
+MEMOS_API_AUTH=<assistant_name>:<password>
 
 # User namespace in MemOS (defaults to assistant name lowercased)
-MEMOS_USER_ID=bee
+MEMOS_USER_ID=<assistant_name>
 
 # Direct Docker network URL for container access (no auth needed)
 # Falls back to MEMOS_API_URL if not set
@@ -127,8 +205,6 @@ MEMOS_CONTAINER_API_URL=http://memos-api:8000/product
 # Docker network name — containers join this to reach MemOS services
 CONTAINER_NETWORK=memos_memos
 ```
-
-Use `AskUserQuestion` to get the user's specific values for each variable.
 
 ### About the reverse proxy
 
@@ -173,9 +249,9 @@ Monitor logs:
 tail -f logs/nanoclaw.log | grep -iE "(memos|memor)"
 ```
 
-## Phase 6: Optional Migration
+## Phase 6: Migration (if requested)
 
-Migrate existing conversation history and group notes to MemOS:
+Only run this if the user opted in during Phase 1.
 
 ### Dry run first
 
@@ -191,7 +267,7 @@ MEMOS_API_URL=http://localhost:8080/product npx tsx scripts/migrate-memories-to-
 
 Options:
 - `--dry-run` — Preview without sending
-- `--user-id=bee` — Override MemOS user ID
+- `--user-id=<assistant_name>` — Override MemOS user ID
 
 ## Troubleshooting
 
@@ -214,7 +290,7 @@ Check that all 5 services are running. Common issue: embedding API key not set o
 
 - Verify `MEMOS_API_URL` is set in `.env`
 - Check logs for `searchMemories` errors
-- Test the API directly: `curl -u user:pass http://localhost:8080/product/search -X POST -H "Content-Type: application/json" -d '{"query":"test","user_id":"bee"}'`
+- Test the API directly: `curl -u <assistant_name>:<password> http://localhost:8080/product/search -X POST -H "Content-Type: application/json" -d '{"query":"test","user_id":"<assistant_name>"}'`
 
 ### Agent doesn't have memory tools
 
