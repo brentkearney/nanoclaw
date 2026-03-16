@@ -33,20 +33,22 @@ Use `AskUserQuestion` to collect all required configuration at once:
 
 > I need a few details to set up MemOS. Please provide:
 >
-> **1. Embeddings API provider** — MemOS needs an OpenAI-compatible API for generating embeddings (vector representations for semantic search).
->   - **OpenRouter** (recommended) — supports many embedding models without a direct OpenAI account. Base URL: `https://openrouter.ai/api/v1`
+> **1. OpenAI-compatible API provider** — MemOS needs an OpenAI-compatible API for two purposes: generating embeddings (vectors for semantic search) and internal memory operations (summarization, deduplication, synthesis). This is separate from the Claude model that NanoClaw uses for agent conversations.
+>   - **OpenRouter** (recommended) — supports many models without a direct OpenAI account. Base URL: `https://openrouter.ai/api/v1`
 >   - **OpenAI directly** — Base URL: `https://api.openai.com/v1`
 >   - **Other** — any OpenAI-compatible endpoint (e.g., local Ollama, LiteLLM, vLLM)
 >
-> **2. API key** for the embeddings provider
+> **2. API key** for the provider above
 >
-> **3. Embedding model name** (e.g., `openai/text-embedding-3-small`)
+> **3. Embedding model** — used for semantic search vectorization. Default: `openai/text-embedding-3-small`. Accept the default or provide a custom model name.
 >
-> **4. MemOS basic auth password** — used to secure the MemOS API via the reverse proxy. The username will default to `<assistant_name>`.
+> **4. Chat model** — used by MemOS internally for memory summarization, deduplication, and the `chat` tool's synthesis. This is NOT the agent's model (which is Claude). Default: `openai/gpt-4o-mini`. Accept the default or provide a custom model name.
 >
-> **5. Where to clone MemOS** — the MemOS Docker stack will be cloned here (default: `../MemOS` relative to this project)
+> **5. MemOS basic auth password** — used to secure the MemOS API via the reverse proxy. The username will default to `<assistant_name>`. I can generate a strong random password for you, or you can specify your own.
 >
-> **6. Migrate existing memories?** — Should I migrate your existing conversation history and group notes into MemOS? (yes/no)
+> **6. Where to clone MemOS** — the MemOS Docker stack will be cloned here (default: `../MemOS` relative to this project)
+>
+> **7. Migrate existing memories?** — Should I migrate your existing conversation history and group notes into MemOS? (yes/no)
 
 Store all answers for use in subsequent phases.
 
@@ -135,7 +137,27 @@ Refer to the [MemOS documentation](https://memos-docs.openmem.net) and the Docke
 Create the MemOS `.env` file using values gathered in Phase 1:
 - `OPENAI_API_KEY` — the user's embeddings API key
 - `OPENAI_BASE_URL` — the user's embeddings API endpoint
+- `MOS_CHAT_MODEL` — the chat model from Phase 1 (default: `openai/gpt-4o-mini`)
+- `MOS_CUBE_PATH` — **must be a persistent path**, not `/tmp/`. Use a `data/` directory inside the MemOS clone (e.g., `./data/cubes`). This path stores per-user memory cubes. Ensure it is mounted as a Docker volume in `docker-compose.yml` so data survives container recreation.
 - Caddy basic auth: username `<assistant_name>`, password from Phase 1
+
+When configuring the Docker Compose file:
+
+1. Add a volume mount for `MOS_CUBE_PATH` on the `memos-api` service so cube data persists
+2. Set an explicit network name so it's predictable regardless of directory:
+
+```yaml
+services:
+  memos-api:
+    volumes:
+      - ./data/cubes:/app/data/cubes  # persistent cube storage
+
+networks:
+  memos:
+    name: memos_network
+```
+
+This ensures the network is always called `memos_network`. Set `CONTAINER_NETWORK=memos_network` in NanoClaw's `.env` to match.
 
 ### Start the stack
 
@@ -163,13 +185,23 @@ curl -s -u <assistant_name>:<password> http://localhost:8080/product/search -X P
 
 A JSON response (even with empty results) means the stack is healthy.
 
+### MemOS API reference
+
+The MemOS Product API uses these endpoints and field names:
+
+- **Add memory**: `POST /product/add` — body: `{"memory_content": "...", "user_id": "..."}`
+- **Search memories**: `POST /product/search` — body: `{"query": "...", "user_id": "..."}`
+- **Response structure**: Search results are nested: `data.text_mem[].memories[]` — each memory has `memory` (text), `metadata.relativity` (relevance score)
+
+Note: The field for adding is `memory_content`, NOT `text`. Using `text` will silently fail.
+
 ### Verify end-to-end memory storage and retrieval
 
 Test the full pipeline — store a memory, search semantically, verify non-zero relevance:
 
 ```bash
 # Store a test memory
-curl -s -u <assistant_name>:<password> http://localhost:8080/product/add -X POST -H "Content-Type: application/json" -d '{"text":"The sky is blue and water is wet","user_id":"test"}'
+curl -s -u <assistant_name>:<password> http://localhost:8080/product/add -X POST -H "Content-Type: application/json" -d '{"memory_content":"The sky is blue and water is wet","user_id":"test"}'
 
 # Wait a few seconds for async ingestion, then search
 sleep 5
@@ -203,7 +235,7 @@ MEMOS_USER_ID=<assistant_name>
 MEMOS_CONTAINER_API_URL=http://memos-api:8000/product
 
 # Docker network name — containers join this to reach MemOS services
-CONTAINER_NETWORK=memos_memos
+CONTAINER_NETWORK=memos_network
 ```
 
 ### About the reverse proxy
