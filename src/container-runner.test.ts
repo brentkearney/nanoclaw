@@ -97,6 +97,7 @@ vi.mock('child_process', async () => {
   };
 });
 
+import { spawn } from 'child_process';
 import { runContainerAgent, ContainerOutput } from './container-runner.js';
 import type { RegisteredGroup } from './types.js';
 
@@ -121,6 +122,82 @@ function emitOutputMarker(
   const json = JSON.stringify(output);
   proc.stdout.push(`${OUTPUT_START_MARKER}\n${json}\n${OUTPUT_END_MARKER}\n`);
 }
+
+describe('container-runner supplementary groups', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fakeProc = createFakeProcess();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('forwards supplementary groups as --group-add flags', async () => {
+    // Mock getuid/getgid to a non-root, non-1000 user
+    vi.spyOn(process, 'getuid').mockReturnValue(5001);
+    vi.spyOn(process, 'getgid').mockReturnValue(5001);
+    // Supplementary groups: primary (5001) + two extras (5050, 5060)
+    vi.spyOn(process, 'getgroups').mockReturnValue([5001, 5050, 5060]);
+
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      async () => {},
+    );
+
+    // Let spawn happen
+    await vi.advanceTimersByTimeAsync(10);
+
+    const spawnArgs = (spawn as unknown as ReturnType<typeof vi.fn>).mock
+      .calls[0][1] as string[];
+
+    // Should have --group-add for 5050 and 5060, but not for 5001 (primary)
+    expect(spawnArgs).toContain('--group-add');
+    const groupAddIndices = spawnArgs.reduce<number[]>((acc, arg, i) => {
+      if (arg === '--group-add') acc.push(i);
+      return acc;
+    }, []);
+    const addedGroups = groupAddIndices.map((i) => spawnArgs[i + 1]);
+    expect(addedGroups).toContain('5050');
+    expect(addedGroups).toContain('5060');
+    expect(addedGroups).not.toContain('5001');
+
+    // Clean up: emit close
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+  });
+
+  it('skips --group-add when no supplementary groups', async () => {
+    vi.spyOn(process, 'getuid').mockReturnValue(5001);
+    vi.spyOn(process, 'getgid').mockReturnValue(5001);
+    vi.spyOn(process, 'getgroups').mockReturnValue([5001]);
+
+    // Clear spawn mock from previous test
+    (spawn as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      async () => {},
+    );
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    const spawnArgs = (spawn as unknown as ReturnType<typeof vi.fn>).mock
+      .calls[0][1] as string[];
+
+    expect(spawnArgs).not.toContain('--group-add');
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+  });
+});
 
 describe('container-runner timeout behavior', () => {
   beforeEach(() => {
