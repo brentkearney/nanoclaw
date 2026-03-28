@@ -867,6 +867,26 @@ describe('SignalChannel', () => {
       await channel.disconnect();
     });
 
+    it('sends spoiler text with SPOILER style', async () => {
+      const channel = createChannel();
+      await channel.connect();
+      mockFetch.mockClear();
+
+      await channel.sendMessage(
+        'signal:+15555550123',
+        'The answer is ||42||',
+      );
+
+      const rpcCall = mockFetch.mock.calls.find((c) =>
+        (c[0] as string).includes('/api/v1/rpc'),
+      );
+      const body = JSON.parse(rpcCall![1]?.body as string);
+      expect(body.params.message).toBe('The answer is 42');
+      expect(body.params.textStyle).toEqual(['14:2:SPOILER']);
+
+      await channel.disconnect();
+    });
+
     it('uses "textStyle" (singular) parameter name with string format', async () => {
       const channel = createChannel();
       await channel.connect();

@@ -740,6 +740,7 @@ function parseSignalStyles(input: string): StyledText {
     { regex: /\*(.+?)\*/g, style: 'BOLD' },
     { regex: /_(.+?)_/g, style: 'ITALIC' },
     { regex: /~~(.+?)~~/g, style: 'STRIKETHROUGH' },
+    { regex: /\|\|(.+?)\|\|/g, style: 'SPOILER' },
   ];
 
   let text = input;
