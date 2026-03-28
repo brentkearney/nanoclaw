@@ -217,6 +217,28 @@ Sync to container environment:
 mkdir -p data/env && cp .env data/env/env
 ```
 
+## Phase 5.5: Agent Formatting Instructions
+
+AskUserQuestion: Would you like to add Signal formatting instructions to `groups/global/CLAUDE.md` so your agent knows how to format messages for Signal?
+
+1. **Yes** — Add Signal formatting section
+2. **No** — Skip for now
+
+If yes, check if `groups/global/CLAUDE.md` has a `## Message Formatting` section. If it does, add a Signal subsection alongside the existing channel sections. If not, create the section. Add the following:
+
+```
+### Signal (folder starts with `signal_`)
+
+Signal supports native text styles that are converted automatically from Markdown:
+- `**bold**` or `*bold*`
+- `_italic_`
+- `` `code` `` or ` ```code blocks``` `
+- `~~strikethrough~~`
+- `||spoiler text||` (tap to reveal — use for answers, punchlines, or sensitive info)
+
+No `##` headings. No `[links](url)`. Use plain URLs.
+```
+
 ## Phase 6: Register a Chat
 
 ### Get the JID
