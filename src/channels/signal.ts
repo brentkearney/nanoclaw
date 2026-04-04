@@ -572,25 +572,24 @@ export class SignalChannel implements Channel {
           return;
         }
 
-        let syncContent = text;
-        if (syncSent.quote) {
-          const q = syncSent.quote;
-          const quoteAuthor = q.authorNumber ?? 'someone';
-          const quoteText = q.text ?? '';
-          if (quoteText) {
-            syncContent = `> ${quoteAuthor}: ${quoteText}\n\n${syncContent}`;
-          }
-        }
-
-        this.opts.onMessage(chatJid, {
+        const msg: import('../types.js').NewMessage = {
           id: String(syncSent.timestamp ?? Date.now()),
           chat_jid: chatJid,
           sender: this.account,
           sender_name: 'Me',
-          content: syncContent,
+          content: text,
           timestamp,
           is_from_me: true,
-        });
+        };
+        if (syncSent.quote) {
+          const q = syncSent.quote;
+          msg.reply_to_sender_name = q.authorNumber ?? 'someone';
+          msg.reply_to_message_content = q.text || undefined;
+          msg.reply_to_message_id = q.id
+            ? String(q.id)
+            : undefined;
+        }
+        this.opts.onMessage(chatJid, msg);
         return;
       }
       // Other sync messages are our outbound — skip
@@ -645,16 +644,6 @@ export class SignalChannel implements Channel {
 
     let content = text;
 
-    // Prepend quote context so the agent sees what's being replied to
-    if (dataMessage.quote) {
-      const q = dataMessage.quote;
-      const quoteAuthor = q.authorNumber ?? 'someone';
-      const quoteText = q.text ?? '';
-      if (quoteText) {
-        content = `> ${quoteAuthor}: ${quoteText}\n\n${content}`;
-      }
-    }
-
     // Trigger detection for groups
     if (isGroup && !TRIGGER_PATTERN.test(content)) {
       const nameRegex = new RegExp(`\\b${escapeRegex(ASSISTANT_NAME)}\\b`, 'i');
@@ -663,7 +652,7 @@ export class SignalChannel implements Channel {
       }
     }
 
-    this.opts.onMessage(chatJid, {
+    const msg: import('../types.js').NewMessage = {
       id: String(dataMessage.timestamp ?? Date.now()),
       chat_jid: chatJid,
       sender,
@@ -671,7 +660,14 @@ export class SignalChannel implements Channel {
       content,
       timestamp,
       is_from_me: false,
-    });
+    };
+    if (dataMessage.quote) {
+      const q = dataMessage.quote;
+      msg.reply_to_sender_name = q.authorNumber ?? 'someone';
+      msg.reply_to_message_content = q.text || undefined;
+      msg.reply_to_message_id = q.id ? String(q.id) : undefined;
+    }
+    this.opts.onMessage(chatJid, msg);
 
     logger.info({ chatJid, sender: senderName }, 'Signal message stored');
   }

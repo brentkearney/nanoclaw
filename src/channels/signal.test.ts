@@ -682,7 +682,7 @@ describe('SignalChannel', () => {
   // --- Quote context ---
 
   describe('quote context', () => {
-    it('prepends quoted message context to inbound messages', async () => {
+    it('populates reply_to fields from quoted messages', async () => {
       const opts = createTestOpts();
       const channel = new SignalChannel(
         'signal-cli',
@@ -712,14 +712,17 @@ describe('SignalChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'signal:+15555550123',
         expect.objectContaining({
-          content: '> +15555550888: Pineapple belongs on pizza\n\nI disagree',
+          content: 'I disagree',
+          reply_to_sender_name: '+15555550888',
+          reply_to_message_content: 'Pineapple belongs on pizza',
+          reply_to_message_id: '1699999999000',
         }),
       );
 
       await channel.disconnect();
     });
 
-    it('delivers message without quote prefix when no quote present', async () => {
+    it('delivers message without reply_to fields when no quote present', async () => {
       const opts = createTestOpts();
       const channel = new SignalChannel(
         'signal-cli',
@@ -741,17 +744,14 @@ describe('SignalChannel', () => {
       });
 
       await new Promise((r) => setTimeout(r, 50));
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'signal:+15555550123',
-        expect.objectContaining({
-          content: 'Just a regular message',
-        }),
-      );
+      const msg = (opts.onMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
+      expect(msg.content).toBe('Just a regular message');
+      expect(msg.reply_to_message_id).toBeUndefined();
 
       await channel.disconnect();
     });
 
-    it('skips quote prefix when quote has no text', async () => {
+    it('omits reply_to_message_content when quote has no text', async () => {
       const opts = createTestOpts();
       const channel = new SignalChannel(
         'signal-cli',
@@ -778,12 +778,10 @@ describe('SignalChannel', () => {
       });
 
       await new Promise((r) => setTimeout(r, 50));
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'signal:+15555550123',
-        expect.objectContaining({
-          content: 'Replying to an image',
-        }),
-      );
+      const msg = (opts.onMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
+      expect(msg.content).toBe('Replying to an image');
+      expect(msg.reply_to_sender_name).toBe('+15555550888');
+      expect(msg.reply_to_message_content).toBeUndefined();
 
       await channel.disconnect();
     });
